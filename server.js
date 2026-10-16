@@ -165,9 +165,32 @@ function computeTax(input) {
 
   const totalARV = resARV + comARV + plotARV;
 
-  const resTax = Math.round(resARV * (taxPct / 100));
-  const comTax = Math.round(comARV * (taxPct / 100));
-  const plotTax = Math.round(plotARV * (taxPct / 100));
+  const houseTypeLower = String(input.house_type || 'Residential').trim().toLowerCase();
+
+  let resTax = 0;
+  let comTax = 0;
+  let plotTax = Math.round(plotARV * (taxPct / 100));
+
+  if (houseTypeLower === 'commercial') {
+    // Commercial property: 2x (दोगुना) -> 20%
+    const commercialCoveredARV = resARV + comARV;
+    comTax = Math.round(commercialCoveredARV * ((taxPct * 2) / 100));
+    resTax = 0;
+  } else if (houseTypeLower === 'government') {
+    // Government property: 3x (तीन गुना) -> 30%
+    const govtCoveredARV = resARV + comARV;
+    resTax = Math.round(govtCoveredARV * ((taxPct * 3) / 100));
+    comTax = 0;
+  } else if (houseTypeLower === 'mixed') {
+    // Mixed property: Residential part at 10%, Commercial/business part at 20% (दोगुना)
+    resTax = Math.round(resARV * (taxPct / 100));
+    comTax = Math.round(comARV * ((taxPct * 2) / 100));
+  } else {
+    // Residential / Plot: 10%
+    resTax = Math.round(resARV * (taxPct / 100));
+    comTax = Math.round(comARV * (taxPct / 100));
+  }
+
   const houseTax = resTax + comTax + plotTax;
 
   // Water Tax (7.5%) & Sewer Tax (2.5%)

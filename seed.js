@@ -65,10 +65,17 @@ async function seed() {
       discount_percent: 20,
       tax_percent: 10,
       total_arv: Number(r.total_arv) || 0,
-      res_tax: Number(r.res_tax) || 0,
-      com_tax: Number(r.com_tax) || 0,
+      res_tax: (String(r.house_type || '').toLowerCase() === 'commercial') ? 0 : 
+               (String(r.house_type || '').toLowerCase() === 'government') ? Math.round((Number(r.total_arv) || 0) * 0.30) : 
+               (Number(r.res_tax) || 0),
+      com_tax: (String(r.house_type || '').toLowerCase() === 'commercial') ? Math.round((Number(r.total_arv) || 0) * 0.20) : 
+               (String(r.house_type || '').toLowerCase() === 'mixed') ? Math.round((Number(r.com_tax) || 0) * 2) : 
+               (Number(r.com_tax) || 0),
       plot_tax: Number(r.plot_tax) || 0,
-      total_tax: Number(r.total_tax) || 0
+      total_tax: (String(r.house_type || '').toLowerCase() === 'commercial') ? Math.round((Number(r.total_arv) || 0) * 0.20) : 
+                 (String(r.house_type || '').toLowerCase() === 'government') ? Math.round((Number(r.total_arv) || 0) * 0.30) : 
+                 (String(r.house_type || '').toLowerCase() === 'mixed') ? ((Number(r.res_tax) || 0) + Math.round((Number(r.com_tax) || 0) * 2) + (Number(r.plot_tax) || 0)) : 
+                 (Number(r.total_tax) || 0)
     }));
 
     await Property.insertMany(formatted);
