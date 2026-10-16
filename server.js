@@ -358,13 +358,21 @@ app.get('/api/properties', async (req, res) => {
     const query = {};
 
     if (ward_no && ward_no !== 'all') {
-      query.ward_no = Number(ward_no);
+      const parsedWard = parseInt(ward_no, 10);
+      if (!isNaN(parsedWard)) {
+        query.ward_no = parsedWard;
+      }
     }
-    if (house_type) query.house_type = house_type;
-    if (nirman) query.nirman = nirman;
+    if (house_type) {
+      query.house_type = new RegExp('^' + house_type.trim() + '$', 'i');
+    }
+    if (nirman) {
+      query.nirman = new RegExp('^' + nirman.trim() + '$', 'i');
+    }
 
-    if (search) {
-      const regex = new RegExp(search.trim(), 'i');
+    if (search && search.trim()) {
+      const safeSearch = search.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const regex = new RegExp(safeSearch, 'i');
       query.$or = [
         { owner_name: regex },
         { father_name: regex },
@@ -375,10 +383,11 @@ app.get('/api/properties', async (req, res) => {
     }
 
     const sort = {};
-    sort[sort_by] = sort_order === 'desc' ? -1 : 1;
+    const sortField = sort_by || 'sr_no';
+    sort[sortField] = sort_order === 'desc' ? -1 : 1;
 
-    const pageNum = parseInt(page, 10);
-    const limitNum = limit === 'all' ? 10000 : parseInt(limit, 10);
+    const pageNum = Math.max(1, parseInt(page, 10) || 1);
+    const limitNum = limit === 'all' ? 10000 : Math.max(1, parseInt(limit, 10) || 25);
     const skip = (pageNum - 1) * limitNum;
 
     const [total, items] = await Promise.all([
@@ -402,9 +411,10 @@ app.get('/api/properties', async (req, res) => {
 app.get('/api/owners/search', async (req, res) => {
   try {
     const { q = '' } = req.query;
-    if (!q) return res.json({ groups: [] });
+    if (!q || !q.trim()) return res.json({ groups: [] });
 
-    const regex = new RegExp(q.trim(), 'i');
+    const safeQ = q.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const regex = new RegExp(safeQ, 'i');
     const matched = await Property.find({
       $or: [
         { owner_name: regex },
