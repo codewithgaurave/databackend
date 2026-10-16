@@ -1,13 +1,14 @@
-require('dotenv').config();
+const path = require('path');
+require('dotenv').config({ path: path.join(__dirname, '.env') });
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
-const path = require('path');
 const fs = require('fs');
 const jwt = require('jsonwebtoken');
 const Property = require('./models/Property');
 const Setting = require('./models/Setting');
 const User = require('./models/User');
+const Ward = require('./models/Ward');
 
 const app = express();
 const PORT = process.env.PORT || 5001;
@@ -61,11 +62,42 @@ async function seedDefaultUsers() {
   }
 }
 
+// Initialize Wards and Backfill Properties
+async function initializeWardsAndProperties() {
+  try {
+    const wardCount = await Ward.countDocuments();
+    if (wardCount === 0) {
+      console.log('🌱 Seeding initial default Ward 01...');
+      await Ward.create({
+        ward_no: 1,
+        ward_name: 'वार्ड 01 - अध्यक्ष',
+        id_prefix: '09037010010',
+        parshad_name: 'वार्ड अध्यक्ष',
+        contact_no: '9839000003',
+        description: 'प्रथम वार्ड (अध्यक्ष)'
+      });
+      console.log('✅ Default Ward 01 initialized');
+    }
+
+    // Backfill any properties missing ward_no
+    const backfilled = await Property.updateMany(
+      { $or: [{ ward_no: { $exists: false } }, { ward_no: null }] },
+      { $set: { ward_no: 1, ward_name: 'वार्ड 01 - अध्यक्ष' } }
+    );
+    if (backfilled.modifiedCount > 0) {
+      console.log(`✅ Backfilled ${backfilled.modifiedCount} existing properties to Ward 01`);
+    }
+  } catch (err) {
+    console.error('Error initializing wards:', err);
+  }
+}
+
 // MongoDB Connection
 mongoose.connect(process.env.MONGODB_URI)
   .then(() => {
     console.log('MongoDB Atlas Connected Successfully on Port', PORT);
     seedDefaultUsers();
+    initializeWardsAndProperties();
   })
   .catch(err => console.error('MongoDB Connection Error:', err));
 
@@ -100,10 +132,22 @@ const requireRole = (...roles) => {
 
 // --- CALCULATION HELPER ---
 function computeTax(input) {
-  const totalArea = Math.max(0, Number(input.total_area) || 0);
-  const coveredArea = Math.max(0, Number(input.covered_area) || 0);
+  const totalLength = Math.max(0, Number(input.total_length) || 0);
+  const totalWidth = Math.max(0, Number(input.total_width) || 0);
+  let totalArea = Math.max(0, Number(input.total_area) || 0);
+  if (totalLength > 0 && totalWidth > 0 && !input.total_area) {
+    totalArea = Math.round(totalLength * totalWidth);
+  }
+
+  const coveredLength = Math.max(0, Number(input.covered_length) || 0);
+  const coveredWidth = Math.max(0, Number(input.covered_width) || 0);
+  let coveredArea = Math.max(0, Number(input.covered_area) || 0);
+  if (coveredLength > 0 && coveredWidth > 0 && !input.covered_area) {
+    coveredArea = Math.round(coveredLength * coveredWidth);
+  }
+
   const businessArea = Math.max(0, Number(input.business_area) || 0);
-  const plotArea = Math.max(0, Number(input.plot_area) || 0);
+  const plotArea = Math.max(0, Number(input.plot_area !== undefined ? input.plot_area : (totalArea - coveredArea)) || 0);
 
   const houseRate = Number(input.house_tax_rate) || 0.40;
   const plotRate = Number(input.plot_tax_rate) || 0.10;
@@ -124,10 +168,25 @@ function computeTax(input) {
   const resTax = Math.round(resARV * (taxPct / 100));
   const comTax = Math.round(comARV * (taxPct / 100));
   const plotTax = Math.round(plotARV * (taxPct / 100));
-  const totalTax = resTax + comTax + plotTax;
+  const houseTax = resTax + comTax + plotTax;
+
+  // Water Tax (7.5%) & Sewer Tax (2.5%)
+  const hasWaterTax = Boolean(input.has_water_tax);
+  const waterTaxPercent = Number(input.water_tax_percent !== undefined ? input.water_tax_percent : 7.5);
+  const waterTax = hasWaterTax ? Math.round(totalARV * (waterTaxPercent / 100)) : 0;
+
+  const hasSewerTax = Boolean(input.has_sewer_tax);
+  const sewerTaxPercent = Number(input.sewer_tax_percent !== undefined ? input.sewer_tax_percent : 2.5);
+  const sewerTax = hasSewerTax ? Math.round(totalARV * (sewerTaxPercent / 100)) : 0;
+
+  const totalTax = houseTax + waterTax + sewerTax;
 
   return {
+    total_length: totalLength,
+    total_width: totalWidth,
     total_area: totalArea,
+    covered_length: coveredLength,
+    covered_width: coveredWidth,
     covered_area: coveredArea,
     business_area: businessArea,
     plot_area: plotArea,
@@ -140,6 +199,13 @@ function computeTax(input) {
     res_tax: resTax,
     com_tax: comTax,
     plot_tax: plotTax,
+    house_tax: houseTax,
+    has_water_tax: hasWaterTax,
+    water_tax_percent: waterTaxPercent,
+    water_tax: waterTax,
+    has_sewer_tax: hasSewerTax,
+    sewer_tax_percent: sewerTaxPercent,
+    sewer_tax: sewerTax,
     total_tax: totalTax
   };
 }
@@ -158,9 +224,13 @@ app.get('/api/health', (req, res) => {
 // Dashboard Statistics
 app.get('/api/stats', async (req, res) => {
   try {
-    const totalCount = await Property.countDocuments();
+    const { ward_no } = req.query;
+    const filter = (ward_no && ward_no !== 'all') ? { ward_no: Number(ward_no) } : {};
+
+    const totalCount = await Property.countDocuments(filter);
     
     const [totals] = await Property.aggregate([
+      ...(Object.keys(filter).length ? [{ $match: filter }] : []),
       {
         $group: {
           _id: null,
@@ -174,6 +244,7 @@ app.get('/api/stats', async (req, res) => {
     ]);
 
     const typeBreakdown = await Property.aggregate([
+      ...(Object.keys(filter).length ? [{ $match: filter }] : []),
       {
         $group: {
           _id: '$house_type',
@@ -184,12 +255,13 @@ app.get('/api/stats', async (req, res) => {
       }
     ]);
 
-    const topAssessments = await Property.find()
+    const topAssessments = await Property.find(filter)
       .sort({ total_tax: -1 })
       .limit(8)
       .lean();
 
     res.json({
+      ward_no: ward_no || 'all',
       totalCount,
       totalTax: totals?.totalTax || 0,
       totalARV: totals?.totalARV || 0,
@@ -207,27 +279,59 @@ app.get('/api/stats', async (req, res) => {
 // Next Available IDs
 app.get('/api/next-id', async (req, res) => {
   try {
+    const { ward_no, house_type = 'Residential' } = req.query;
+    const targetWardNo = ward_no && ward_no !== 'all' ? Number(ward_no) : 1;
+
+    // Find target ward for prefix
+    const wardDoc = await Ward.findOne({ ward_no: targetWardNo }).lean();
     const setting = await Setting.findOne().lean() || {};
-    const prefix = setting.id_prefix || '09037010010';
+
+    let prefix = wardDoc?.id_prefix;
+    if (!prefix) {
+      prefix = setting.id_prefix || `090370${String(targetWardNo).padStart(2, '0')}0010`;
+    }
 
     const lastBySr = await Property.findOne().sort({ sr_no: -1 }).lean();
     const nextSr = (lastBySr?.sr_no || 0) + 1;
 
-    // Find highest house number
-    const allProps = await Property.find({}, { house_no: 1 }).lean();
+    // Find highest house number in this ward
+    const wardProps = await Property.find({ ward_no: targetWardNo }, { house_no: 1 }).lean();
     let maxHouse = 10000;
-    allProps.forEach(p => {
-      const match = String(p.house_no).match(/\d+/);
-      if (match) {
-        const num = parseInt(match[0], 10);
-        if (num > maxHouse && num < 90000) maxHouse = num;
-      }
-    });
+    if (wardProps.length > 0) {
+      wardProps.forEach(p => {
+        const match = String(p.house_no).match(/\d+/);
+        if (match) {
+          const num = parseInt(match[0], 10);
+          if (num > maxHouse && num < 99999) maxHouse = num;
+        }
+      });
+    }
 
     const nextHouse = maxHouse + 1;
-    const nextPropId = `${prefix}01${nextHouse}R`;
+
+    // Type suffix mapping: Residential -> R, Commercial -> C, Mixed -> M, Plot -> P, Government -> G
+    const typeSuffixMap = {
+      'Residential': 'R',
+      'Commercial': 'C',
+      'Mixed': 'M',
+      'Plot': 'P',
+      'Government': 'G'
+    };
+    const suffix = typeSuffixMap[house_type] || 'R';
+
+    // Format: Exactly 16 digits + 1 special letter = 17 characters
+    let cleanPrefix = String(prefix).replace(/\D/g, '');
+    if (cleanPrefix.length < 11) {
+      cleanPrefix = cleanPrefix.padEnd(11, '0');
+    } else if (cleanPrefix.length > 11) {
+      cleanPrefix = cleanPrefix.slice(0, 11);
+    }
+    const padHouse = String(nextHouse).padStart(5, '0');
+    const nextPropId = `${cleanPrefix}${padHouse}${suffix}`;
 
     res.json({
+      ward_no: targetWardNo,
+      ward_name: wardDoc?.ward_name || `वार्ड ${String(targetWardNo).padStart(2, '0')}`,
       nextSr,
       nextHouse: String(nextHouse),
       nextPropId
@@ -246,12 +350,16 @@ app.get('/api/properties', async (req, res) => {
       search = '',
       house_type = '',
       nirman = '',
+      ward_no = '',
       sort_by = 'sr_no',
       sort_order = 'asc'
     } = req.query;
 
     const query = {};
 
+    if (ward_no && ward_no !== 'all') {
+      query.ward_no = Number(ward_no);
+    }
     if (house_type) query.house_type = house_type;
     if (nirman) query.nirman = nirman;
 
@@ -358,9 +466,19 @@ app.post('/api/properties', async (req, res) => {
       srNo = (last?.sr_no || 0) + 1;
     }
 
+    // Determine ward
+    let wardNo = Number(body.ward_no) || 1;
+    let wardName = body.ward_name;
+    if (!wardName) {
+      const targetWard = await Ward.findOne({ ward_no: wardNo }).lean();
+      wardName = targetWard?.ward_name || `वार्ड ${String(wardNo).padStart(2, '0')}`;
+    }
+
     const doc = new Property({
       ...body,
       ...calc,
+      ward_no: wardNo,
+      ward_name: wardName,
       sr_no: srNo,
       owner_name: String(body.owner_name || '').trim().toUpperCase(),
       father_name: String(body.father_name || '').trim().toUpperCase(),
@@ -439,6 +557,137 @@ app.put('/api/settings', async (req, res) => {
   try {
     const updated = await Setting.findOneAndUpdate({}, req.body, { new: true, upsert: true });
     res.json(updated);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// --- WARD MANAGEMENT ENDPOINTS ---
+
+// 1. List All Wards with Stats
+app.get('/api/wards', async (req, res) => {
+  try {
+    const wards = await Ward.find().sort({ ward_no: 1 }).lean();
+    
+    // Aggregated stats per ward
+    const stats = await Property.aggregate([
+      {
+        $group: {
+          _id: '$ward_no',
+          property_count: { $sum: 1 },
+          total_tax: { $sum: '$total_tax' },
+          total_arv: { $sum: '$total_arv' }
+        }
+      }
+    ]);
+
+    const statsMap = {};
+    stats.forEach(s => {
+      statsMap[s._id] = {
+        count: s.property_count,
+        totalTax: s.total_tax,
+        totalARV: s.total_arv
+      };
+    });
+
+    const result = wards.map(w => ({
+      ...w,
+      property_count: statsMap[w.ward_no]?.count || 0,
+      total_tax: statsMap[w.ward_no]?.totalTax || 0,
+      total_arv: statsMap[w.ward_no]?.totalARV || 0
+    }));
+
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 2. Create New Ward (Admin Only)
+app.post('/api/wards', authMiddleware, requireRole('admin'), async (req, res) => {
+  try {
+    const { ward_no, ward_name, id_prefix, parshad_name, contact_no, description } = req.body;
+    
+    if (!ward_no || !ward_name) {
+      return res.status(400).json({ error: 'वार्ड संख्या एवं वार्ड का नाम अनिवार्य हैं।' });
+    }
+
+    const num = Number(ward_no);
+    if (isNaN(num) || num <= 0) {
+      return res.status(400).json({ error: 'मान्य वार्ड संख्या दर्ज करें (जैसे 1, 2, 3...)।' });
+    }
+
+    const existing = await Ward.findOne({ ward_no: num });
+    if (existing) {
+      return res.status(400).json({ error: `वार्ड संख्या ${num} पहले से मौजूद है (${existing.ward_name})।` });
+    }
+
+    const padNo = String(num).padStart(2, '0');
+    const defaultPrefix = id_prefix ? id_prefix.trim() : `090370${padNo}0010`;
+
+    const newWard = await Ward.create({
+      ward_no: num,
+      ward_name: ward_name.trim(),
+      id_prefix: defaultPrefix,
+      parshad_name: parshad_name ? parshad_name.trim() : '',
+      contact_no: contact_no ? contact_no.trim() : '',
+      description: description ? description.trim() : ''
+    });
+
+    res.status(201).json(newWard);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 3. Update Ward (Admin Only)
+app.put('/api/wards/:id', authMiddleware, requireRole('admin'), async (req, res) => {
+  try {
+    const { ward_name, id_prefix, parshad_name, contact_no, description, active } = req.body;
+    
+    const ward = await Ward.findById(req.params.id);
+    if (!ward) return res.status(404).json({ error: 'वार्ड नहीं मिला।' });
+
+    const oldName = ward.ward_name;
+    if (ward_name) ward.ward_name = ward_name.trim();
+    if (id_prefix) ward.id_prefix = id_prefix.trim();
+    if (parshad_name !== undefined) ward.parshad_name = parshad_name.trim();
+    if (contact_no !== undefined) ward.contact_no = contact_no.trim();
+    if (description !== undefined) ward.description = description.trim();
+    if (active !== undefined) ward.active = Boolean(active);
+
+    await ward.save();
+
+    // If ward name changed, sync all properties with this ward_no
+    if (ward_name && ward_name.trim() !== oldName) {
+      await Property.updateMany(
+        { ward_no: ward.ward_no },
+        { $set: { ward_name: ward_name.trim() } }
+      );
+    }
+
+    res.json(ward);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 4. Delete Ward (Admin Only)
+app.delete('/api/wards/:id', authMiddleware, requireRole('admin'), async (req, res) => {
+  try {
+    const ward = await Ward.findById(req.params.id);
+    if (!ward) return res.status(404).json({ error: 'वार्ड नहीं मिला।' });
+
+    // Check if properties exist in this ward
+    const propCount = await Property.countDocuments({ ward_no: ward.ward_no });
+    if (propCount > 0) {
+      return res.status(400).json({ 
+        error: `इस वार्ड में कुल ${propCount} संपत्तियां दर्ज हैं। सुरक्षा कारणों से इसे हटाया नहीं जा सकता।` 
+      });
+    }
+
+    await Ward.findByIdAndDelete(req.params.id);
+    res.json({ message: `वार्ड "${ward.ward_name}" सफलतापूर्वक हटा दिया गया है।` });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

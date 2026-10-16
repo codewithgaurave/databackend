@@ -1,6 +1,8 @@
 const mongoose = require('mongoose');
 
 const PropertySchema = new mongoose.Schema({
+  ward_no: { type: Number, default: 1, index: true },
+  ward_name: { type: String, default: 'वार्ड 01 - अध्यक्ष', index: true },
   sr_no: { type: Number, required: true, index: true },
   property_id: { type: String, required: true, unique: true, index: true },
   house_no: { type: String, required: true, index: true },
@@ -17,8 +19,12 @@ const PropertySchema = new mongoose.Schema({
     enum: ['Pakka', 'Ardh Pakka', 'Kachcha', 'Plot'],
     default: 'Pakka' 
   },
-  road_width: { type: String, default: '0 To 09' },
+  road_width: { type: String, default: '0 से 9 मीटर' },
+  total_length: { type: Number, default: 0 },
+  total_width: { type: Number, default: 0 },
   total_area: { type: Number, default: 0 },
+  covered_length: { type: Number, default: 0 },
+  covered_width: { type: Number, default: 0 },
   covered_area: { type: Number, default: 0 },
   business_area: { type: Number, default: 0 },
   plot_area: { type: Number, default: 0 },
@@ -31,6 +37,13 @@ const PropertySchema = new mongoose.Schema({
   res_tax: { type: Number, default: 0 },
   com_tax: { type: Number, default: 0 },
   plot_tax: { type: Number, default: 0 },
+  house_tax: { type: Number, default: 0 },
+  has_water_tax: { type: Boolean, default: false },
+  water_tax_percent: { type: Number, default: 7.5 },
+  water_tax: { type: Number, default: 0 },
+  has_sewer_tax: { type: Boolean, default: false },
+  sewer_tax_percent: { type: Number, default: 2.5 },
+  sewer_tax: { type: Number, default: 0 },
   total_tax: { type: Number, default: 0 }
 }, {
   timestamps: true

@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const Property = require('./models/Property');
 const Setting = require('./models/Setting');
+const Ward = require('./models/Ward');
 
 async function seed() {
   try {
@@ -11,6 +12,20 @@ async function seed() {
     console.log('Connecting to MongoDB Atlas...');
     await mongoose.connect(uri);
     console.log('Connected to MongoDB successfully!');
+
+    // Ensure Ward 01 exists
+    const ward1 = await Ward.findOne({ ward_no: 1 });
+    if (!ward1) {
+      await Ward.create({
+        ward_no: 1,
+        ward_name: 'वार्ड 01 - अध्यक्ष',
+        id_prefix: '09037010010',
+        parshad_name: 'वार्ड अध्यक्ष',
+        contact_no: '9839000003',
+        description: 'प्रथम वार्ड (अध्यक्ष)'
+      });
+      console.log('Created default Ward 01 record.');
+    }
 
     // Read ward_01_data.json
     let jsonPath = path.join(__dirname, 'data/ward_01_data.json');
@@ -29,6 +44,8 @@ async function seed() {
 
     // Format records
     const formatted = rawData.map(r => ({
+      ward_no: 1,
+      ward_name: 'वार्ड 01 - अध्यक्ष',
       sr_no: Number(r.sr_no) || 0,
       property_id: String(r.property_id || '').trim(),
       house_no: String(r.house_no || '').trim(),

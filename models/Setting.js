@@ -1,6 +1,7 @@
 const mongoose = require('mongoose');
 
 const SettingSchema = new mongoose.Schema({
+  active_ward_no: { type: Number, default: 1 },
   ward_name: { type: String, default: 'वार्ड 01 - अध्यक्ष' },
   palika_name: { type: String, default: 'कार्यालय नगर पालिका परिषद / नगर पंचायत' },
   financial_year: { type: String, default: '2026-2027' },
