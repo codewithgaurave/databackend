@@ -146,7 +146,13 @@ function computeTax(input) {
     coveredArea = Math.round(coveredLength * coveredWidth);
   }
 
-  const businessArea = Math.max(0, Number(input.business_area) || 0);
+  const businessLength = Math.max(0, Number(input.business_length) || 0);
+  const businessWidth = Math.max(0, Number(input.business_width) || 0);
+  let businessArea = Math.max(0, Number(input.business_area) || 0);
+  if (businessLength > 0 && businessWidth > 0 && !input.business_area) {
+    businessArea = Math.round(businessLength * businessWidth);
+  }
+
   const plotArea = Math.max(0, Number(input.plot_area !== undefined ? input.plot_area : (totalArea - coveredArea)) || 0);
 
   const houseRate = Number(input.house_tax_rate) || 0.40;
@@ -211,6 +217,8 @@ function computeTax(input) {
     covered_length: coveredLength,
     covered_width: coveredWidth,
     covered_area: coveredArea,
+    business_length: businessLength,
+    business_width: businessWidth,
     business_area: businessArea,
     plot_area: plotArea,
     house_tax_rate: houseRate,
