@@ -87,8 +87,43 @@ async function initializeWardsAndProperties() {
     if (backfilled.modifiedCount > 0) {
       console.log(`✅ Backfilled ${backfilled.modifiedCount} existing properties to Ward 01`);
     }
+
+    // Ensure each ward's serial numbers start cleanly from 1
+    await resequenceWardSerialNumbers();
   } catch (err) {
     console.error('Error initializing wards:', err);
+  }
+}
+
+// Ensure every ward's serial numbers start from 1 sequentially
+async function resequenceWardSerialNumbers() {
+  try {
+    const wardNos = await Property.distinct('ward_no');
+    for (const wNo of wardNos) {
+      if (!wNo) continue;
+      const props = await Property.find({ ward_no: wNo }).sort({ createdAt: 1, sr_no: 1, _id: 1 });
+      if (props.length === 0) continue;
+      
+      let needsFix = false;
+      for (let i = 0; i < props.length; i++) {
+        if (props[i].sr_no !== (i + 1)) {
+          needsFix = true;
+          break;
+        }
+      }
+
+      if (needsFix) {
+        console.log(`🔄 Re-sequencing Ward ${wNo} serial numbers (1 to ${props.length})...`);
+        for (let i = 0; i < props.length; i++) {
+          if (props[i].sr_no !== (i + 1)) {
+            await Property.updateOne({ _id: props[i]._id }, { $set: { sr_no: i + 1 } });
+          }
+        }
+        console.log(`✅ Ward ${wNo} serial numbers re-sequenced successfully.`);
+      }
+    }
+  } catch (err) {
+    console.error('Error re-sequencing ward serial numbers:', err);
   }
 }
 
@@ -347,7 +382,8 @@ app.get('/api/next-id', async (req, res) => {
       prefix = setting.id_prefix || `090370${String(targetWardNo).padStart(2, '0')}0010`;
     }
 
-    const lastBySr = await Property.findOne().sort({ sr_no: -1 }).lean();
+    // Ward-specific next serial number (starts from 1 for every ward)
+    const lastBySr = await Property.findOne({ ward_no: targetWardNo }).sort({ sr_no: -1 }).lean();
     const nextSr = (lastBySr?.sr_no || 0) + 1;
 
     // Find highest house number in this ward
@@ -440,7 +476,12 @@ app.get('/api/properties', async (req, res) => {
 
     const sort = {};
     const sortField = sort_by || 'sr_no';
-    sort[sortField] = sort_order === 'desc' ? -1 : 1;
+    if (!query.ward_no && sortField === 'sr_no') {
+      sort.ward_no = 1;
+      sort.sr_no = sort_order === 'desc' ? -1 : 1;
+    } else {
+      sort[sortField] = sort_order === 'desc' ? -1 : 1;
+    }
 
     const pageNum = Math.max(1, parseInt(page, 10) || 1);
     const limitNum = limit === 'all' ? 10000 : Math.max(1, parseInt(limit, 10) || 25);
@@ -525,19 +566,20 @@ app.post('/api/properties', async (req, res) => {
     // Auto-calculate tax
     const calc = computeTax(body);
 
-    // Get next Sr No if not provided
-    let srNo = Number(body.sr_no);
-    if (!srNo) {
-      const last = await Property.findOne().sort({ sr_no: -1 }).lean();
-      srNo = (last?.sr_no || 0) + 1;
-    }
-
-    // Determine ward
+    // Determine ward first
     let wardNo = Number(body.ward_no) || 1;
     let wardName = body.ward_name;
     if (!wardName) {
       const targetWard = await Ward.findOne({ ward_no: wardNo }).lean();
       wardName = targetWard?.ward_name || `वार्ड ${String(wardNo).padStart(2, '0')}`;
+    }
+
+    // Get next Sr No per ward (starts from 1 for every ward)
+    const last = await Property.findOne({ ward_no: wardNo }).sort({ sr_no: -1 }).lean();
+    const nextWardSr = (last?.sr_no || 0) + 1;
+    let srNo = Number(body.sr_no);
+    if (!srNo || srNo > nextWardSr) {
+      srNo = nextWardSr;
     }
 
     const doc = new Property({
@@ -601,6 +643,34 @@ app.delete('/api/properties/:id', async (req, res) => {
     const deleted = await Property.findByIdAndDelete(req.params.id);
     if (!deleted) return res.status(404).json({ error: 'Property not found' });
     res.json({ message: 'Property deleted successfully', id: req.params.id });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Admin endpoint to manually resequence ward serial numbers
+app.post('/api/wards/resequence-sr', async (req, res) => {
+  try {
+    const { ward_no } = req.body;
+    let wardNos = [];
+    if (ward_no && ward_no !== 'all') {
+      wardNos = [Number(ward_no)];
+    } else {
+      wardNos = await Property.distinct('ward_no');
+    }
+
+    let updatedCount = 0;
+    for (const wNo of wardNos) {
+      if (!wNo) continue;
+      const props = await Property.find({ ward_no: wNo }).sort({ createdAt: 1, sr_no: 1, _id: 1 });
+      for (let i = 0; i < props.length; i++) {
+        if (props[i].sr_no !== (i + 1)) {
+          await Property.updateOne({ _id: props[i]._id }, { $set: { sr_no: i + 1 } });
+          updatedCount++;
+        }
+      }
+    }
+    res.json({ success: true, message: `वार्ड क्रमांक सफलतापूर्वक री-सीक्वेंस कर दिए गए हैं (${updatedCount} रिकॉर्ड्स अपडेट हुए)।` });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
