@@ -139,45 +139,68 @@ function computeTax(input) {
     totalArea = Math.round(totalLength * totalWidth);
   }
 
-  const coveredLength = Math.max(0, Number(input.covered_length) || 0);
-  const coveredWidth = Math.max(0, Number(input.covered_width) || 0);
-  let coveredArea = Math.max(0, Number(input.covered_area) || 0);
-  if (coveredLength > 0 && coveredWidth > 0 && !input.covered_area) {
+  const houseTypeLower = String(input.house_type || 'Residential').trim().toLowerCase();
+  const isPlot = houseTypeLower === 'plot';
+
+  const coveredLength = isPlot ? 0 : Math.max(0, Number(input.covered_length) || 0);
+  const coveredWidth = isPlot ? 0 : Math.max(0, Number(input.covered_width) || 0);
+  let coveredArea = isPlot ? 0 : Math.max(0, Number(input.covered_area) || 0);
+  if (!isPlot && coveredLength > 0 && coveredWidth > 0 && !input.covered_area) {
     coveredArea = Math.round(coveredLength * coveredWidth);
   }
 
-  const businessLength = Math.max(0, Number(input.business_length) || 0);
-  const businessWidth = Math.max(0, Number(input.business_width) || 0);
-  let businessArea = Math.max(0, Number(input.business_area) || 0);
-  if (businessLength > 0 && businessWidth > 0 && !input.business_area) {
+  // Multi-floor support (मंजिल)
+  let floorsData = (!isPlot && Array.isArray(input.floors_data)) ? input.floors_data : [];
+  let floorsCount = isPlot ? 0 : (Number(input.floors_count) || (floorsData.length > 0 ? floorsData.length : 1));
+
+  if (!isPlot && floorsData.length > 0) {
+    const sumFloors = floorsData.reduce((sum, f) => sum + (Number(f.area) || 0), 0);
+    if (sumFloors > 0) {
+      coveredArea = sumFloors;
+    }
+  }
+
+  const businessLength = isPlot ? 0 : Math.max(0, Number(input.business_length) || 0);
+  const businessWidth = isPlot ? 0 : Math.max(0, Number(input.business_width) || 0);
+  let businessArea = isPlot ? 0 : Math.max(0, Number(input.business_area) || 0);
+  if (!isPlot && businessLength > 0 && businessWidth > 0 && !input.business_area) {
     businessArea = Math.round(businessLength * businessWidth);
   }
 
-  const plotArea = Math.max(0, Number(input.plot_area !== undefined ? input.plot_area : (totalArea - coveredArea)) || 0);
+  const gfArea = isPlot ? 0 : (floorsData.length > 0 ? (Number(floorsData[0].area) || coveredArea) : coveredArea);
+  const plotArea = isPlot ? totalArea : Math.max(0, Number(input.plot_area !== undefined ? input.plot_area : (totalArea - gfArea)) || 0);
 
   const houseRate = Number(input.house_tax_rate) || 0.40;
   const plotRate = Number(input.plot_tax_rate) || 0.10;
   const comRate = Number(input.commercial_tax_rate) || 1.00;
 
+  // 80% Rule on Covered Area for taxation:
+  // Statutory rule: 80% of covered area is assessed as the taxable base area
   const discountPct = Number(input.discount_percent !== undefined ? input.discount_percent : 20);
   const taxPct = Number(input.tax_percent !== undefined ? input.tax_percent : 10);
 
-  const discountMultiplier = Math.max(0, 1 - (discountPct / 100));
+  const discountMultiplier = Math.max(0, 1 - (discountPct / 100)); // Default 0.80 (80% taxable base multiplier)
   const residentialArea = Math.max(0, coveredArea - businessArea);
 
-  const resARV = Math.round(residentialArea * discountMultiplier * houseRate * 12);
-  const comARV = Math.round(businessArea * discountMultiplier * comRate * 12);
-  const plotARV = Math.round(plotArea * discountMultiplier * plotRate * 12);
+  const taxableResArea = Math.round(residentialArea * discountMultiplier);
+  const taxableComArea = Math.round(businessArea * discountMultiplier);
+  const taxablePlotArea = Math.round(plotArea * discountMultiplier);
+
+  const resARV = Math.round(taxableResArea * houseRate * 12);
+  const comARV = Math.round(taxableComArea * comRate * 12);
+  const plotARV = Math.round(taxablePlotArea * plotRate * 12);
 
   const totalARV = resARV + comARV + plotARV;
-
-  const houseTypeLower = String(input.house_type || 'Residential').trim().toLowerCase();
 
   let resTax = 0;
   let comTax = 0;
   let plotTax = Math.round(plotARV * (taxPct / 100));
 
-  if (houseTypeLower === 'commercial') {
+  if (isPlot) {
+    resTax = 0;
+    comTax = 0;
+    plotTax = Math.round(plotARV * (taxPct / 100));
+  } else if (houseTypeLower === 'commercial') {
     // Commercial property: 2x (दोगुना) -> 20%
     const commercialCoveredARV = resARV + comARV;
     comTax = Math.round(commercialCoveredARV * ((taxPct * 2) / 100));
@@ -217,6 +240,8 @@ function computeTax(input) {
     covered_length: coveredLength,
     covered_width: coveredWidth,
     covered_area: coveredArea,
+    floors_count: floorsCount,
+    floors_data: floorsData,
     business_length: businessLength,
     business_width: businessWidth,
     business_area: businessArea,
