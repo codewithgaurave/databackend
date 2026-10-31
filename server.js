@@ -371,15 +371,24 @@ app.get('/api/stats', async (req, res) => {
 app.get('/api/next-id', async (req, res) => {
   try {
     const { ward_no, house_type = 'Residential' } = req.query;
-    const targetWardNo = ward_no && ward_no !== 'all' ? Number(ward_no) : 1;
+    const setting = (await Setting.findOne().lean()) || {};
+
+    let targetWardNo;
+    if (ward_no && ward_no !== 'all') {
+      targetWardNo = Number(ward_no);
+    } else if (setting.active_ward_no) {
+      targetWardNo = Number(setting.active_ward_no);
+    } else {
+      const firstWard = await Ward.findOne().sort({ ward_no: 1 }).lean();
+      targetWardNo = firstWard ? firstWard.ward_no : 1;
+    }
 
     // Find target ward for prefix
     const wardDoc = await Ward.findOne({ ward_no: targetWardNo }).lean();
-    const setting = await Setting.findOne().lean() || {};
 
     let prefix = wardDoc?.id_prefix;
     if (!prefix) {
-      prefix = setting.id_prefix || `090370${String(targetWardNo).padStart(2, '0')}0010`;
+      prefix = setting.id_prefix || `09037${String(targetWardNo).padStart(2, '0')}0010`;
     }
 
     // Ward-specific next serial number (starts from 1 for every ward)
@@ -413,17 +422,24 @@ app.get('/api/next-id', async (req, res) => {
 
     // Format: Exactly 16 digits + 1 special letter = 17 characters
     let cleanPrefix = String(prefix).replace(/\D/g, '');
-    if (cleanPrefix.length < 11) {
-      cleanPrefix = cleanPrefix.padEnd(11, '0');
-    } else if (cleanPrefix.length > 11) {
-      cleanPrefix = cleanPrefix.slice(0, 11);
+    if (!cleanPrefix) {
+      cleanPrefix = `09037${String(targetWardNo).padStart(2, '0')}0010`;
     }
-    const padHouse = String(nextHouse).padStart(5, '0');
+    const houseStr = String(nextHouse);
+    let padHouse = houseStr;
+    if (cleanPrefix.length + houseStr.length < 16) {
+      padHouse = houseStr.padStart(16 - cleanPrefix.length, '0');
+    } else if (cleanPrefix.length + houseStr.length > 16) {
+      if (cleanPrefix.length > 16 - houseStr.length) {
+        cleanPrefix = cleanPrefix.slice(0, Math.max(0, 16 - houseStr.length));
+      }
+    }
     const nextPropId = `${cleanPrefix}${padHouse}${suffix}`;
 
     res.json({
       ward_no: targetWardNo,
       ward_name: wardDoc?.ward_name || `वार्ड ${String(targetWardNo).padStart(2, '0')}`,
+      prefix: wardDoc?.id_prefix || setting.id_prefix || cleanPrefix,
       nextSr,
       nextHouse: String(nextHouse),
       nextPropId
@@ -692,6 +708,16 @@ app.get('/api/settings', async (req, res) => {
 app.put('/api/settings', async (req, res) => {
   try {
     const updated = await Setting.findOneAndUpdate({}, req.body, { new: true, upsert: true });
+
+    // Sync active ward prefix if provided
+    const targetWardNo = Number(req.body.active_ward_no);
+    if (targetWardNo && req.body.id_prefix) {
+      await Ward.findOneAndUpdate(
+        { ward_no: targetWardNo },
+        { id_prefix: req.body.id_prefix.trim() }
+      );
+    }
+
     res.json(updated);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -759,7 +785,7 @@ app.post('/api/wards', authMiddleware, requireRole('admin'), async (req, res) =>
     }
 
     const padNo = String(num).padStart(2, '0');
-    const defaultPrefix = id_prefix ? id_prefix.trim() : `090370${padNo}0010`;
+    const defaultPrefix = id_prefix ? id_prefix.trim() : `09037${padNo}0010`;
 
     const newWard = await Ward.create({
       ward_no: num,
@@ -786,7 +812,7 @@ app.put('/api/wards/:id', authMiddleware, requireRole('admin'), async (req, res)
 
     const oldName = ward.ward_name;
     if (ward_name) ward.ward_name = ward_name.trim();
-    if (id_prefix) ward.id_prefix = id_prefix.trim();
+    if (id_prefix !== undefined) ward.id_prefix = id_prefix.trim();
     if (parshad_name !== undefined) ward.parshad_name = parshad_name.trim();
     if (contact_no !== undefined) ward.contact_no = contact_no.trim();
     if (description !== undefined) ward.description = description.trim();
@@ -799,6 +825,14 @@ app.put('/api/wards/:id', authMiddleware, requireRole('admin'), async (req, res)
       await Property.updateMany(
         { ward_no: ward.ward_no },
         { $set: { ward_name: ward_name.trim() } }
+      );
+    }
+
+    // Sync Setting if this ward is active_ward_no
+    if (id_prefix) {
+      await Setting.findOneAndUpdate(
+        { active_ward_no: ward.ward_no },
+        { $set: { id_prefix: id_prefix.trim(), ward_name: ward.ward_name } }
       );
     }
 
