@@ -179,6 +179,7 @@ function computeTax(input) {
   const isCommercial = houseTypeLower === 'commercial';
   const isGovt = houseTypeLower === 'government';
   const isNoDiscount = isCommercial || isGovt;
+  const isMixed = houseTypeLower === 'mixed';
 
   const coveredLength = isPlot ? 0 : Math.max(0, Number(input.covered_length) || 0);
   const coveredWidth = isPlot ? 0 : Math.max(0, Number(input.covered_width) || 0);
@@ -208,7 +209,12 @@ function computeTax(input) {
   const plotLength = isPlot ? 0 : Math.max(0, Number(input.plot_length) || 0);
   const plotWidth = isPlot ? 0 : Math.max(0, Number(input.plot_width) || 0);
   const gfArea = isPlot ? 0 : (floorsData.length > 0 ? (Number(floorsData[0].area) || coveredArea) : coveredArea);
-  let plotArea = isPlot ? totalArea : Math.max(0, Number(input.plot_area !== undefined ? input.plot_area : (totalArea - gfArea)) || 0);
+  
+  // In Mixed: both residential covered and shop are constructed on the plot
+  const totalGroundConstructed = isMixed ? (gfArea + businessArea) : gfArea;
+  const defaultPlotArea = Math.max(0, totalArea - totalGroundConstructed);
+
+  let plotArea = isPlot ? totalArea : Math.max(0, Number(input.plot_area !== undefined && input.plot_area !== '' ? input.plot_area : defaultPlotArea) || 0);
   if (!isPlot && plotLength > 0 && plotWidth > 0 && !input.plot_area) {
     plotArea = Math.round(plotLength * plotWidth);
   }
@@ -220,12 +226,11 @@ function computeTax(input) {
   // 80% Rule on Covered Area for taxation:
   // Statutory rule: 80% of covered area is assessed as the taxable base area for Residential / Plot
   // For Commercial and Government: 100% of area is assessed (no statutory 20% discount)
-  // For Mixed: shop is within the 80% covered base, remaining is residential
+  // For Mixed: Residential house (e.g. 225) gets 80% rule, and Shop (e.g. 150) gets 100%
   const discountPct = isNoDiscount ? 0 : Number(input.discount_percent !== undefined ? input.discount_percent : 20);
   const taxPct = Number(input.tax_percent !== undefined ? input.tax_percent : 10);
 
   const discountMultiplier = isNoDiscount ? 1 : Math.max(0, 1 - (discountPct / 100));
-  const residentialArea = Math.max(0, coveredArea - businessArea);
 
   let taxableResArea = 0;
   let taxableComArea = 0;
@@ -235,14 +240,13 @@ function computeTax(input) {
     taxableComArea = 0;
   } else if (isNoDiscount) {
     taxableComArea = businessArea;
-    taxableResArea = Math.max(0, coveredArea - businessArea);
-  } else if (houseTypeLower === 'mixed') {
-    const taxableCoveredBase = Math.round(coveredArea * discountMultiplier);
+    taxableResArea = coveredArea;
+  } else if (isMixed) {
+    taxableResArea = Math.round(coveredArea * discountMultiplier);
     taxableComArea = businessArea;
-    taxableResArea = Math.max(0, taxableCoveredBase - businessArea);
   } else {
     taxableComArea = 0;
-    taxableResArea = Math.round(residentialArea * discountMultiplier);
+    taxableResArea = Math.round(coveredArea * discountMultiplier);
   }
 
   const taxablePlotArea = isNoDiscount ? plotArea : Math.round(plotArea * discountMultiplier);
@@ -300,7 +304,8 @@ function computeTax(input) {
     total_area: totalArea,
     covered_length: coveredLength,
     covered_width: coveredWidth,
-    covered_area: coveredArea,
+    covered_area: isMixed ? (coveredArea + businessArea) : coveredArea,
+    res_covered_area: coveredArea,
     floors_count: floorsCount,
     floors_data: floorsData,
     business_length: businessLength,

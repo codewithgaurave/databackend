@@ -26,6 +26,7 @@ const PropertySchema = new mongoose.Schema({
   covered_length: { type: Number, default: 0 },
   covered_width: { type: Number, default: 0 },
   covered_area: { type: Number, default: 0 },
+  res_covered_area: { type: Number, default: 0 },
   floors_count: { type: Number, default: 1 },
   floors_data: { type: Array, default: [] },
   business_length: { type: Number, default: 0 },
