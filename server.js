@@ -176,6 +176,9 @@ function computeTax(input) {
 
   const houseTypeLower = String(input.house_type || 'Residential').trim().toLowerCase();
   const isPlot = houseTypeLower === 'plot';
+  const isCommercial = houseTypeLower === 'commercial';
+  const isGovt = houseTypeLower === 'government';
+  const isNoDiscount = isCommercial || isGovt;
 
   const coveredLength = isPlot ? 0 : Math.max(0, Number(input.covered_length) || 0);
   const coveredWidth = isPlot ? 0 : Math.max(0, Number(input.covered_width) || 0);
@@ -210,16 +213,17 @@ function computeTax(input) {
   const comRate = Number(input.commercial_tax_rate) || 1.00;
 
   // 80% Rule on Covered Area for taxation:
-  // Statutory rule: 80% of covered area is assessed as the taxable base area
-  const discountPct = Number(input.discount_percent !== undefined ? input.discount_percent : 20);
+  // Statutory rule: 80% of covered area is assessed as the taxable base area for Residential / Plot
+  // For Commercial and Government: 100% of area is assessed (no statutory 20% discount)
+  const discountPct = isNoDiscount ? 0 : Number(input.discount_percent !== undefined ? input.discount_percent : 20);
   const taxPct = Number(input.tax_percent !== undefined ? input.tax_percent : 10);
 
-  const discountMultiplier = Math.max(0, 1 - (discountPct / 100)); // Default 0.80 (80% taxable base multiplier)
+  const discountMultiplier = isNoDiscount ? 1 : Math.max(0, 1 - (discountPct / 100));
   const residentialArea = Math.max(0, coveredArea - businessArea);
 
-  const taxableResArea = Math.round(residentialArea * discountMultiplier);
-  const taxableComArea = Math.round(businessArea * discountMultiplier);
-  const taxablePlotArea = Math.round(plotArea * discountMultiplier);
+  const taxableResArea = isNoDiscount ? residentialArea : Math.round(residentialArea * discountMultiplier);
+  const taxableComArea = (isNoDiscount || houseTypeLower === 'mixed') ? businessArea : Math.round(businessArea * discountMultiplier);
+  const taxablePlotArea = isNoDiscount ? plotArea : Math.round(plotArea * discountMultiplier);
 
   const resARV = Math.round(taxableResArea * houseRate * 12);
   const comARV = Math.round(taxableComArea * comRate * 12);
