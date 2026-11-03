@@ -31,6 +31,8 @@ const PropertySchema = new mongoose.Schema({
   business_length: { type: Number, default: 0 },
   business_width: { type: Number, default: 0 },
   business_area: { type: Number, default: 0 },
+  plot_length: { type: Number, default: 0 },
+  plot_width: { type: Number, default: 0 },
   plot_area: { type: Number, default: 0 },
   house_tax_rate: { type: Number, default: 0.40 },
   plot_tax_rate: { type: Number, default: 0.10 },
