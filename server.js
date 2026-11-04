@@ -334,6 +334,57 @@ function computeTax(input) {
   };
 }
 
+const parseHouseNo = (houseNo) => {
+  const raw = String(houseNo || '').trim().toUpperCase();
+  const match = raw.match(/^(\d+)(?:[\/\-\s_]?([A-Z0-9]+))?$/i);
+  if (match) {
+    return { num: match[1], sub: match[2] || '' };
+  }
+  const num = raw.replace(/\D/g, '') || '10001';
+  const sub = raw.replace(/^[^A-Z0-9]*/i, '').replace(/^\d+/, '').replace(/[\/\-\s_]/g, '');
+  return { num, sub };
+};
+
+const buildPropertyId = (prefix, houseNo, houseType = 'Residential') => {
+  const typeSuffixMap = {
+    'Residential': 'R',
+    'Commercial': 'C',
+    'Mixed': 'M',
+    'Plot': 'P',
+    'Government': 'G'
+  };
+  const categorySuffix = typeSuffixMap[houseType] || 'R';
+  let cleanPrefix = String(prefix || '').replace(/\D/g, '');
+  if (!cleanPrefix) cleanPrefix = '09037010010';
+
+  let basePrefix = cleanPrefix;
+  if (basePrefix.length === 11 && basePrefix.endsWith('0')) {
+    basePrefix = basePrefix.slice(0, 10);
+  } else if (basePrefix.length > 10) {
+    basePrefix = basePrefix.slice(0, 10);
+  }
+
+  const { num, sub } = parseHouseNo(houseNo);
+  const houseSpace = 16 - basePrefix.length; // 6 chars for house part
+
+  let housePart = '';
+  if (sub) {
+    const numSpace = Math.max(1, houseSpace - sub.length);
+    const padNum = num.length < numSpace ? num.padStart(numSpace, '0') : num;
+    housePart = (padNum + sub).slice(-houseSpace);
+  } else {
+    housePart = num.length < houseSpace ? num.padStart(houseSpace, '0') : num;
+  }
+
+  if (basePrefix.length + housePart.length > 16) {
+    basePrefix = basePrefix.slice(0, Math.max(0, 16 - housePart.length));
+  } else if (basePrefix.length + housePart.length < 16) {
+    housePart = housePart.padStart(16 - basePrefix.length, '0');
+  }
+
+  return `${basePrefix}${housePart}${categorySuffix}`;
+};
+
 // --- ROUTES ---
 
 // Health Check
@@ -443,36 +494,13 @@ app.get('/api/next-id', async (req, res) => {
 
     const nextHouse = maxHouse + 1;
 
-    // Type suffix mapping: Residential -> R, Commercial -> C, Mixed -> M, Plot -> P, Government -> G
-    const typeSuffixMap = {
-      'Residential': 'R',
-      'Commercial': 'C',
-      'Mixed': 'M',
-      'Plot': 'P',
-      'Government': 'G'
-    };
-    const suffix = typeSuffixMap[house_type] || 'R';
-
-    // Format: Exactly 16 digits + 1 special letter = 17 characters
-    let cleanPrefix = String(prefix).replace(/\D/g, '');
-    if (!cleanPrefix) {
-      cleanPrefix = `09037${String(targetWardNo).padStart(2, '0')}0010`;
-    }
-    const houseStr = String(nextHouse);
-    let padHouse = houseStr;
-    if (cleanPrefix.length + houseStr.length < 16) {
-      padHouse = houseStr.padStart(16 - cleanPrefix.length, '0');
-    } else if (cleanPrefix.length + houseStr.length > 16) {
-      if (cleanPrefix.length > 16 - houseStr.length) {
-        cleanPrefix = cleanPrefix.slice(0, Math.max(0, 16 - houseStr.length));
-      }
-    }
-    const nextPropId = `${cleanPrefix}${padHouse}${suffix}`;
+    const cleanPrefix = wardDoc?.id_prefix || setting.id_prefix || prefix;
+    const nextPropId = buildPropertyId(cleanPrefix, nextHouse, house_type);
 
     res.json({
       ward_no: targetWardNo,
       ward_name: wardDoc?.ward_name || `वार्ड ${String(targetWardNo).padStart(2, '0')}`,
-      prefix: wardDoc?.id_prefix || setting.id_prefix || cleanPrefix,
+      prefix: cleanPrefix,
       nextSr,
       nextHouse: String(nextHouse),
       nextPropId
@@ -682,6 +710,9 @@ app.put('/api/properties/:id', async (req, res) => {
     if (!updated) return res.status(404).json({ error: 'Property not found' });
     res.json(updated);
   } catch (err) {
+    if (err.code === 11000) {
+      return res.status(400).json({ error: 'इस प्रॉपर्टी आईडी का रिकॉर्ड पहले से मौजूद है।' });
+    }
     res.status(500).json({ error: err.message });
   }
 });
