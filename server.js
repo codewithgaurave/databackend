@@ -251,11 +251,37 @@ function computeTax(input) {
 
   const taxablePlotArea = isNoDiscount ? plotArea : Math.round(plotArea * discountMultiplier);
 
-  const resARV = Math.round(taxableResArea * houseRate * 12);
-  const comARV = Math.round(taxableComArea * comRate * 12);
-  const plotARV = Math.round(taxablePlotArea * plotRate * 12);
+  // Rule 7(5) Non-Residential Incentives / Rebates (2% each, max 8%)
+  const rebateRainwater = Boolean(input.rebate_rainwater);
+  const rebateGreenery = Boolean(input.rebate_greenery);
+  const rebateParking = Boolean(input.rebate_parking);
+  const rebatePollution = Boolean(input.rebate_pollution);
 
-  const totalARV = resARV + comARV + plotARV;
+  let rebatePercent = 0;
+  if (isCommercial || isMixed) {
+    if (rebateRainwater) rebatePercent += 2;
+    if (rebateGreenery) rebatePercent += 2;
+    if (rebateParking) rebatePercent += 2;
+    if (rebatePollution) rebatePercent += 2;
+  }
+
+  const resARV = Math.round(taxableResArea * houseRate * 12);
+  const rawComARV = Math.round(taxableComArea * comRate * 12);
+  
+  // Apply Rule 7(5) 2% rebate to commercial ARV
+  const targetComARV = isCommercial ? (resARV + rawComARV) : rawComARV;
+  const rebateAmount = rebatePercent > 0 ? Math.round(targetComARV * (rebatePercent / 100)) : 0;
+  const comARV = Math.max(0, targetComARV - rebateAmount);
+
+  const plotARV = Math.round(taxablePlotArea * plotRate * 12);
+  const totalARV = (isCommercial ? 0 : resARV) + comARV + plotARV;
+
+  // Rule 7(3) Central Govt Service Charge (75%, 50%, 33.33% or 100%)
+  const govtServiceType = input.govt_service_type || 'tax_100';
+  let govtServicePercent = 100;
+  if (govtServiceType === 'service_75') govtServicePercent = 75;
+  else if (govtServiceType === 'service_50') govtServicePercent = 50;
+  else if (govtServiceType === 'service_33') govtServicePercent = 33.33;
 
   let resTax = 0;
   let comTax = 0;
@@ -266,14 +292,14 @@ function computeTax(input) {
     comTax = 0;
     plotTax = Math.round(plotARV * (taxPct / 100));
   } else if (houseTypeLower === 'commercial') {
-    // Commercial property: 2x (दोगुना) -> 20%
-    const commercialCoveredARV = resARV + comARV;
-    comTax = Math.round(commercialCoveredARV * ((taxPct * 2) / 100));
+    // Commercial property: 2x (दोगुना) -> 20% on discounted comARV
+    comTax = Math.round(comARV * ((taxPct * 2) / 100));
     resTax = 0;
   } else if (houseTypeLower === 'government') {
-    // Government property: 3x (तीन गुना) -> 30%
-    const govtCoveredARV = resARV + comARV;
-    resTax = Math.round(govtCoveredARV * ((taxPct * 3) / 100));
+    // Government property: 3x (तीन गुना) -> 30%, with Rule 7(3) Service Charge percentage
+    const govtCoveredARV = resARV + rawComARV;
+    const baseGovtTax = Math.round(govtCoveredARV * ((taxPct * 3) / 100));
+    resTax = Math.round(baseGovtTax * (govtServicePercent / 100));
     comTax = 0;
   } else if (houseTypeLower === 'mixed') {
     // Mixed property: Residential part at 10%, Commercial/business part at 20% (दोगुना)
@@ -319,6 +345,14 @@ function computeTax(input) {
     commercial_tax_rate: comRate,
     discount_percent: discountPct,
     tax_percent: taxPct,
+    rebate_rainwater: rebateRainwater,
+    rebate_greenery: rebateGreenery,
+    rebate_parking: rebateParking,
+    rebate_pollution: rebatePollution,
+    rebate_percent: rebatePercent,
+    rebate_amount: rebateAmount,
+    govt_service_type: govtServiceType,
+    govt_service_percent: govtServicePercent,
     total_arv: totalARV,
     res_tax: resTax,
     com_tax: comTax,

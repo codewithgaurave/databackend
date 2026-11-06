@@ -51,6 +51,20 @@ const PropertySchema = new mongoose.Schema({
   has_sewer_tax: { type: Boolean, default: false },
   sewer_tax_percent: { type: Number, default: 2.5 },
   sewer_tax: { type: Number, default: 0 },
+  // Rule 7(5) Non-Residential Incentives / Rebates (अनावासीय प्रोत्साहन छूट - 2% प्रत्येक)
+  rebate_rainwater: { type: Boolean, default: false },
+  rebate_greenery: { type: Boolean, default: false },
+  rebate_parking: { type: Boolean, default: false },
+  rebate_pollution: { type: Boolean, default: false },
+  rebate_percent: { type: Number, default: 0 },
+  rebate_amount: { type: Number, default: 0 },
+  // Rule 7(3) Central Government Service Charge (भारत संघ / विभाग सेवा प्रभार)
+  govt_service_type: { 
+    type: String, 
+    enum: ['tax_100', 'service_75', 'service_50', 'service_33'], 
+    default: 'tax_100' 
+  },
+  govt_service_percent: { type: Number, default: 100 },
   total_tax: { type: Number, default: 0 }
 }, {
   timestamps: true
